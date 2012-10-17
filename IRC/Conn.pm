@@ -33,7 +33,8 @@ sub new {
 
    $self->{conn} = IO::Socket::INET->new(PeerAddr => $srv,
                                          PeerPort => $port,
-                                         Proto    => $proto);
+                                         Proto    => $proto,
+                                         Timeout  => 120);
 
    return bless($self, $class);
 }

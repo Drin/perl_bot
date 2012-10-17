@@ -25,6 +25,7 @@ sub connect {
    my ($self, $name, $port, $nick) = @_;
    my $msg = q{};
    my $has_sent_info = 0;
+   my $time_passed = 1;
 
    my $server_connect = sub {
       my $conn = IRC::Conn->new($name, $port);
@@ -39,21 +40,32 @@ sub connect {
 
       while ($conn->{conn}) {
          sleep(2);
+         $time_passed++;
 
          print("checking wire...\n");
          if ($msg = $conn->read()) {
             print $msg;
-
+            $time_passed = 1;
          }
 
-         if ($msg && !$has_sent_info) {
-            print("setting USER\n");
-            $conn->send("USER $nick 0 * :aldrin\n");
+         if (!($time_passed % 5)) {
+            if (!$has_sent_info) {
+               print("setting USER\n");
+               $conn->send("USER $nick 0 * :aldrin\n");
 
-            print("setting nick to '$nick'\n");
-            $conn->send("NICK $nick\n");
-            
-            $has_sent_info = 1;
+               $has_sent_info = 1;
+            }
+            elsif ($has_sent_info == 1) {
+               print("setting nick to '$nick'\n");
+               $conn->send("NICK $nick\n");
+               
+               $has_sent_info = 2;
+            }
+
+            else {
+               print("ponging for no reason...\n");
+               $conn->send("PONG $name\n");
+            }
          }
 
 =waitgoddamnit
