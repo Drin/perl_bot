@@ -23,6 +23,8 @@ sub new {
 
 sub connect {
    my ($self, $name, $port, $nick) = @_;
+   my $msg = q{};
+   my $has_sent_info = 0;
 
    my $server_connect = sub {
       my $conn = IRC::Conn->new($name, $port);
@@ -34,24 +36,35 @@ sub connect {
 
       print("connecting to server '$name'...\n");
       $conn->connect();
-      print $conn->read();
-      print $conn->read();
-      print $conn->read();
-
-      print("setting USER\n");
-      $conn->send("USER $nick 0 * :Aldrin");
-
-      print("setting nick to '$nick'\n");
-      $conn->send("NICK $nick");
-      print $conn->read();
-      print $conn->read();
-
-      sleep(2);
-      print("joining channel 'tt'\n");
-      $conn->send('JOIN #tt');
 
       while ($conn->{conn}) {
-         print $conn->read();
+         sleep(2);
+
+         print("checking wire...\n");
+         if ($msg = $conn->read()) {
+            print $msg;
+
+         }
+
+         if ($msg && !$has_sent_info) {
+            print("setting USER\n");
+            $conn->send("USER $nick 0 * :aldrin\n");
+
+            print("setting nick to '$nick'\n");
+            $conn->send("NICK $nick\n");
+            
+            $has_sent_info = 1;
+         }
+
+=waitgoddamnit
+         if ($msg =~ m/welcome/i) {
+
+            sleep(2);
+
+            print("joining channel 'tt'\n");
+            $conn->send('JOIN #tt\n');
+         }
+=cut
       }
    };
 
