@@ -3,19 +3,11 @@ package IRC::Conn;
 
 use strict;
 use warnings;
+use English;
+use Carp;
 
 use IO::Socket; # qw{PF_INET SOCK_STREAM};
 use IO::Select;
-
-my %PROTOCOL_CONF = (
-   tcp => [PF_INET, SOCK_STREAM],
-);
-
-sub get_proto_conf {
-   my ($proto) = @_;
-
-   return (@{$PROTOCOL_CONF{$proto}}, getprotobyname($proto));
-}
 
 sub new {
    my ($class, $srv, $port, $proto) = @_;
@@ -25,7 +17,7 @@ sub new {
       return;
    }
 
-   $proto = $proto || "tcp";
+   $proto = $proto || 'tcp';
 
    my $addr = sockaddr_in($port, inet_aton($srv));
    my $self = {remote => $srv, port => $port, proto => $proto, addr => $addr,
@@ -33,17 +25,14 @@ sub new {
 
    $self->{conn} = IO::Socket::INET->new(PeerAddr => $srv,
                                          PeerPort => $port,
-                                         Proto    => $proto,
-                                         Timeout  => 120);
+                                         Proto    => $proto)
+   or croak("Unable to connect to IRC\n");
 
    return bless($self, $class);
 }
 
 sub connect {
    my ($self) = @_;
-
-   #socket($self->{conn}, PF_INET, SOCK_STREAM, getprotobyname($self->{proto})) or die("socket: $!");
-   #connect($self->{conn}, $self->{addr}) or die("connect: $!");
 
    $self->{manager}->add($self->{conn});
 
@@ -63,19 +52,20 @@ sub read {
 
    my @fh_list = $self->{manager}->can_read(1);
 
-   if (scalar @fh_list > 0)  { print("got message!\n"); }
-   else  { print("no message...\n"); }
-
-   for my $fh (@fh_list) {
-      $msg = <$fh>;
+   if ($ENV{DEBUG}) {
+      if (scalar @fh_list > 0)  { print("message received\n"); }
+      else  { print("no message received\n"); }
    }
 
+   for my $fh (@fh_list) { $msg = <$fh>; }
    return $msg;
 }
 
 sub send {
    my ($self, $msg) = @_;
-   print ("sending message $msg\n");
+
+   if ($ENV{DEBUG}) { print ("sending message $msg\n"); }
+
    print({$self->{conn}} $msg);
 
    return;
