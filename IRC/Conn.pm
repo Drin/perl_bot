@@ -3,10 +3,9 @@ package IRC::Conn;
 
 use strict;
 use warnings;
-use English;
 use Carp;
 
-use IO::Socket; # qw{PF_INET SOCK_STREAM};
+use IO::Socket;
 use IO::Select;
 
 sub new {
@@ -19,14 +18,8 @@ sub new {
 
    $proto = $proto || 'tcp';
 
-   my $addr = sockaddr_in($port, inet_aton($srv));
-   my $self = {remote => $srv, port => $port, proto => $proto, addr => $addr,
-               manager => IO::Select->new()};
-
-   $self->{conn} = IO::Socket::INET->new(PeerAddr => $srv,
-                                         PeerPort => $port,
-                                         Proto    => $proto)
-   or croak("Unable to connect to IRC\n");
+   my $self = {remote => $srv, port => $port, proto => $proto,
+               channels => [], manager => IO::Select->new()};
 
    return bless($self, $class);
 }
@@ -34,41 +27,34 @@ sub new {
 sub connect {
    my ($self) = @_;
 
-   $self->{manager}->add($self->{conn});
+   $self->{conn} = IO::Socket::INET->new(PeerAddr => $self->{remote},
+                                         PeerPort => $self->{port},
+                                         Proto    => $self->{proto})
+   or croak("Unable to connect to IRC\n");
 
-   return;
+   $self->{manager}->add($self->{conn});
 }
 
 sub disconnect {
    my ($self) = @_;
 
+   $self->send("QUIT I must go now, OH WOE IS ME!");
    close($self->{conn});
-   return;
 }
 
 sub read {
    my ($self) = @_;
    my $msg = q{};
 
-   my @fh_list = $self->{manager}->can_read(1);
-
-   if ($ENV{DEBUG}) {
-      if (scalar @fh_list > 0)  { print("message received\n"); }
-      else  { print("no message received\n"); }
-   }
-
-   for my $fh (@fh_list) { $msg = <$fh>; }
+   for my $fh ($self->{manager}->can_read(2)) { $msg = <$fh>; }
    return $msg;
 }
 
 sub send {
    my ($self, $msg) = @_;
 
-   if ($ENV{DEBUG}) { print ("sending message $msg\n"); }
-
-   print({$self->{conn}} $msg);
-
-   return;
+   print({*STDERR} "$msg\n");
+   print({$self->{conn}} "$msg\n");
 }
 
 1;
