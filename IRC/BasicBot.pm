@@ -16,6 +16,21 @@ sub new {
    return bless($self, $class);
 }
 
+sub process {
+   my ($self, $chan, $text) = @_;
+   my $is_addressed;
+
+   if ($text =~ s/^:$self->{nick}: //) { $is_addressed = 1; }
+
+   if (!$is_addressed) {
+      print({*STDERR} "I saw someone say '$text'...\n");
+   }
+   else {
+      print({*STDERR} "[$chan]: '$text'\n");
+      #TODO decide whether to do greeting or wiki stuffs
+   }
+}
+
 sub default_handler {
    my ($self, $conn, $msg) = @_;
 
@@ -31,6 +46,12 @@ sub default_handler {
    }
 
    elsif ($msg =~ m/^PING(.*)$/i) { $conn->send("PONG $1"); }
+   elsif ($msg =~ m/PRIVMSG #(.*?) (:?.*)$/) {
+      my ($chan, $text) = ($1, $2);
+      $text =~ s/\r//g;
+
+      $self->process($chan, $text);
+   }
 }
 
 sub connect {
@@ -48,7 +69,7 @@ sub connect {
       while ($conn->{conn}) {
 
          if (my $msg = $conn->read()) {
-            if ($msg =~ m/die/i) {
+            if ($msg =~ m/$self->{nick}.*die/i) {
                $conn->disconnect($srv);
                last;
             }
