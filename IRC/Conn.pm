@@ -56,11 +56,7 @@ sub send {
       $target_list = join(q{,}, @{$msg_info->{targets}}).' ';
    }
 
-   while ($msg_info->{msg} =~ m/(.{1,$MAX_MSG_LEN})/g) {
-      my $msg_chunk = $target_list.$1;
-
-      print({$self->{conn}} "$msg_info->{cmd} $msg_chunk\n");
-   }
+   print({$self->{conn}} "$msg_info->{cmd} $target_list$msg_info->{msg}\n");
 }
 
 sub is_connected {
