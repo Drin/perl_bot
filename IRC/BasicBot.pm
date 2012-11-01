@@ -22,10 +22,10 @@ sub connect {
    my ($self, $srv, $port) = @_;
 
    my $thread_work = sub {
-      my $conn = IRC::Conn->new($srv, $port);
+      $self->{irc_conn} = IRC::Conn->new($srv, $port);
 
-      while ($conn->{conn}->connected()) {
-         $self->default_handler($conn, $conn->read());
+      while ($self->{irc_conn}->is_connected()) {
+         $self->default_handler($self->{irc_conn}->read());
       }
    };
 
@@ -39,25 +39,26 @@ sub is_connected {
 }
 
 sub default_handler {
-   my ($self, $conn, $text) = @_;
+   my ($self, $text) = @_;
 
    if ($text =~ m/found.*hostname/i) {
-      $conn->send("USER $self->{nick} 0 * :aldrin");
-      $conn->send("NICK $self->{nick}");
+      my $nick = $self->{nick};
+      $self->{irc_conn}->send({cmd => 'USER', msg => "$nick 0 * :aldrin"});
+      $self->{irc_conn}->send({cmd => 'NICK', msg => "$nick"});
    }
 
    elsif ($text =~ m/:welcome/i) {
       for my $chan (@{$self->{channels}}) {
-         $conn->send("JOIN $chan");
+         $self->{irc_conn}->send({cmd => 'JOIN', msg => "$chan"});
       }
    }
 
    elsif ($text =~ m/$self->{nick}/i && $text =~ m/die/i) {
-      $conn->disconnect();
+      $self->{irc_conn}->disconnect();
    }
 
    elsif ($text =~ m/^PING(.*)$/i) {
-      $conn->send("PONG $1");
+      $self->{irc_conn}->send({cmd => 'PONG', msg => "$1"});
    }
 
    else { $self->process($self->parse_msg($text)); }
