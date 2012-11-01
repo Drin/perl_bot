@@ -17,12 +17,25 @@ sub get_topic {
 
    my $what_regex = '(?:who|what) (?:is|are) (.*)[?]?';
    my $tell_regex = '(?:tell me about|describe) (.*)[.?]?';
+   my $inquiry_regex = 'to (?:know|hear) more? about (.*)[.]?';
 
-   if ($text =~ m/$what_regex/i) {
-      return $1;
+   $text =~ s/(?:the|an|a) //g;
+
+   if ($text =~ m/$what_regex|$tell_regex|$inquiry_regex/i) {
+      return $1 || $2 || $3;
    }
-   elsif ($text =~ m/$tell_regex/i) {
-      return $1;
+
+   return;
+}
+
+sub get_bday_topic {
+   my ($self, $text) = @_;
+
+   my $when_regex = 'when was (.*) born[?]?';
+   my $what_regex = 'what (?:day )?(?:was|is) (?:the )?(?:birth.*? of )?(.*)(?:\'s .*?)?[?]?';
+
+   if ($text && $text =~ m/$when_regex|$what_regex/i) {
+      return $1 || $2;
    }
 
    return;
@@ -31,56 +44,67 @@ sub get_topic {
 sub process {
    my ($self, $msg) = @_;
 
-   if ($msg->{text} =~ m/$self->{nick}/i &&
-      (my $topic = $self->get_topic($msg->{text}))) {
-      my $wiki_res = $self->{wiki_conn}->query('get', $topic);
+   my $search_topic = $self->get_topic($msg->{text});
+   my $bday_topic   = $self->get_bday_topic($msg->{text});
 
-      while (!$wiki_res->is_success()) {
-         $topic =~ s/^\w+//;
-         $wiki_res = $self->{wiki_conn}->query('get', $topic);
-      }
+   if ($msg->{text} =~ m/$self->{nick}/i && ($search_topic || $bday_topic)) {
+      my $wiki_content = $self->{wiki_conn}->query('get',
+                                                   ($search_topic || $bday_topic));
 
-      my $content = $wiki_res->content;
+      if ($search_topic) {
+         $wiki_content =~ s/(?:<table.*?>.*?)?<\/table>//sig;
 
-      $content =~ s{<table>.*?</table>}{}g;
-
-      while ($content =~ m{(?:</table>.*?)?
-                           <p>(.*?)</p>
-                           (?:.*?<table>)?}gisx) {
-         my $wiki_info = $1;
-
-         print({*STDERR} "info: '$wiki_info'\n");
-
-         if ($wiki_info =~ m/<small>|^\d+/i) { next; }
-         elsif ($wiki_info =~ m/help:searching/i) {
-            $self->{irc_conn}->send({cmd => 'PRIVMSG',
-                                     msg => q{:Sorry, I don't know.},
-                                     targets => $self->{channels}});
-            last;
-         }
-         elsif ($wiki_info =~ m/may refer to/i) {
-            $self->{irc_conn}->send({cmd => 'PRIVMSG',
-                                     msg => q{:It's tough to figure out...},
-                                     targets => $self->{channels}});
-
-            $self->{irc_conn}->send({cmd => 'PRIVMSG',
-                                     msg => q{:Sorry, I'm not sure :(},
-                                     targets => $self->{channels}});
-            last;
-         }
-
-         $wiki_info =~ s/<.*?>|\[.*\]//g;
-         my $num_sentences = 0;
-
-         while ($wiki_info =~ m/[.]/g) { $num_sentences++; }
-
-         if ($wiki_info =~ m/^((?:.*?[.]){0,$num_sentences})/) {
-            $self->{irc_conn}->send({cmd => 'PRIVMSG',
-                                     msg => ":$1",
-                                     targets => $self->{channels}});
-            last;
+         while ($wiki_content =~ m{<p>(.*?)</p>}sig) {
+            if (!$self->get_info($1)) { next; }
+            else { last; }
          }
       }
+      elsif($bday_topic) {
+         if ($wiki_content =~ m/$bday_topic.*?class="bday">(.*?)</si) {
+            #if ($wiki_content =~ m/class="bday">(.*?)</s) {
+            print({*STDERR} "reporting birthday..\n");
+            $self->report_bday($bday_topic, $1);
+         }
+      }
+   }
+}
+
+sub get_info {
+   my ($self, $wiki_paragraph) = @_;
+
+   if ($wiki_paragraph =~ m/<small>|^\d+/i) { return 0; }
+   elsif ($wiki_paragraph =~ m/(?:may refer to|help:searching)/i) {
+      print({*STDERR} "confusing page: $wiki_paragraph\n");
+
+      $self->{irc_conn}->send({cmd => 'PRIVMSG',
+                               msg => q{:That information escapes me right now...},
+                               targets => $self->{channels}});
+      return 1;
+   }
+
+   $wiki_paragraph =~ s/(?:<.*?>)|(?:\[.*?\])//sg;
+
+   while ($wiki_paragraph =~ m/((?:.*?[.]){2,4})/sg) {
+      $self->{irc_conn}->send({cmd => 'PRIVMSG',
+                               msg => ":$1",
+                               targets => $self->{channels}});
+   }
+
+   return 1;
+}
+
+sub report_bday {
+   my ($self, $subj, $date) = @_;
+
+   print ({*STDERR} "bdate: $date\n");
+
+   my @months = qw{Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec};
+
+   if ($date =~ m/(\d{4})-(\d\d)-(\d\d)/) {
+      my $month = $months[($2 - 1)];
+      $self->{irc_conn}->send({cmd => 'PRIVMSG',
+                               msg => ":$subj\'s birthday is $month $3, $1",
+                               targets => $self->{channels}});
    }
 }
 

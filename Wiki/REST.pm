@@ -24,7 +24,7 @@ sub query {
    my $url = $self->{WIKI_BASE}.$self->{WIKI_SEARCH}.$subject;
 
    if (my $response = $self->{browser}->$http_method($url, [], {})) {
-      if ($response->is_success()) { return $response; }
+      if ($response->is_success()) { return $response->content; }
    }
 
    return;
