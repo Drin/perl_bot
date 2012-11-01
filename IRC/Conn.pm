@@ -21,24 +21,20 @@ sub new {
    my $self = {remote => $srv, port => $port, proto => $proto,
                channels => [], manager => IO::Select->new()};
 
-   return bless($self, $class);
-}
-
-sub connect {
-   my ($self) = @_;
-
    $self->{conn} = IO::Socket::INET->new(PeerAddr => $self->{remote},
                                          PeerPort => $self->{port},
                                          Proto    => $self->{proto})
    or croak("Unable to connect to IRC\n");
 
    $self->{manager}->add($self->{conn});
+
+   return bless($self, $class);
 }
 
 sub disconnect {
    my ($self) = @_;
 
-   $self->send("QUIT I must go now, OH WOE IS ME!");
+   $self->send("QUIT :I must go now, OH WOE IS ME!");
    close($self->{conn});
 }
 
@@ -53,7 +49,7 @@ sub read {
 sub send {
    my ($self, $msg) = @_;
 
-   print({*STDERR} "$msg\n");
+   if ($ENV{DEBUG}) { print({*STDERR} "$msg\n"); }
    print({$self->{conn}} "$msg\n");
 }
 
