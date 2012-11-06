@@ -61,7 +61,11 @@ sub default_handler {
       $self->{irc_conn}->send({cmd => 'PONG', msg => "$1"});
    }
 
-   else { $self->process($self->parse_msg($text)); }
+   my $parsed_msg = $self->parse_msg($text);
+
+   my $did_work = $self->process($parsed_msg);
+
+   return ($did_work, $parsed_msg);
 }
 
 sub parse_msg {
@@ -87,6 +91,8 @@ sub process {
                       "from '$msg->{sender}'\n".
                       "in channel '$msg->{channel}'\n");
    }
+
+   return 1;
 }
 
 1;

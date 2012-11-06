@@ -37,6 +37,7 @@ sub disconnect {
    my ($self) = @_;
 
    $self->send({cmd => 'QUIT', msg => ":I must go now, OH WOE IS ME!"});
+   sleep 2;
    close($self->{conn});
 }
 
