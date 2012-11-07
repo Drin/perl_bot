@@ -23,6 +23,7 @@ sub connect {
 
    my $thread_work = sub {
       $self->{irc_conn} = IRC::Conn->new($srv, $port);
+      $self->connect_brain();
 
       while ($self->{irc_conn}->is_connected()) {
          $self->default_handler($self->{irc_conn}->read());
@@ -32,14 +33,24 @@ sub connect {
    $self->{$srv} = threads->create($thread_work);
 }
 
+sub connect_brain { return; }
+
 sub is_connected {
    my ($self, $srv) = @_;
 
    return $self->{$srv}->is_running();
 }
 
+sub cleanup {
+   my ($self, $srv) = @_;
+
+   $self->{$srv}->join();
+}
+
 sub default_handler {
    my ($self, $text) = @_;
+
+   my $parsed_msg = $self->parse_msg($text);
 
    if ($text =~ m/found.*hostname/i) {
       my $nick = $self->{nick};
@@ -53,7 +64,7 @@ sub default_handler {
       }
    }
 
-   elsif ($text =~ m/$self->{nick}/i && $text =~ m/die/i) {
+   elsif ($text =~ m/$self->{nick}.*die/i) {
       $self->{irc_conn}->disconnect();
    }
 
@@ -61,38 +72,71 @@ sub default_handler {
       $self->{irc_conn}->send({cmd => 'PONG', msg => "$1"});
    }
 
-   my $parsed_msg = $self->parse_msg($text);
+   elsif ($parsed_msg->{command}) {
+      $self->process_command($parsed_msg);
+   }
 
-   my $did_work = $self->process($parsed_msg);
-
-   return ($did_work, $parsed_msg);
+   return $parsed_msg;
 }
 
 sub parse_msg {
    my ($self, $msg) = @_;
-   my ($sender, $chan, $text);
+   my ($sender, $chan, $text, $directed, $type, $command);
 
    if ($ENV{DEBUG}) { print ({*STDERR} $msg); }
 
-   if ($msg =~ m/^:(.*?)!.*PRIVMSG ([#]?.*?) :(.*)/) {
-      ($sender, $chan, $text) = ($1, $2, $3);
+   if ($msg =~ m/^:(.*?)!.*?([A-Z]+) ([#]?.*?)? ?:(.*)/) {
+      ($sender, $type, $chan, $text) = ($1, $2, $3, $4);
    }
 
-   return ({sender  => $sender,
-            channel => $chan,
-            text    => $text});
+   if ($text) {
+      $directed = ($text =~ s/^$self->{nick}\b//) || $chan =~ m/$self->{nick}/;
+      $command = $text =~ s/^%//;
+
+      $text =~ s/^\W*//;
+      $text =~ s/\r//;
+   }
+
+   if ($chan && $chan =~ m/$self->{nick}/) { $chan = $sender; }
+
+   return ({type     => $type,
+            command  => $command,
+            sender   => $sender,
+            directed => $directed,
+            channel  => $chan,
+            text     => $text});
 }
 
-sub process {
+sub process_command {
    my ($self, $msg) = @_;
 
-   if ($ENV{DEBUG} && $msg->{text}) {
-      print({*STDERR} "processing message '$msg->{text}'\n".
-                      "from '$msg->{sender}'\n".
-                      "in channel '$msg->{channel}'\n");
+   if ($msg->{command} && $msg->{directed}) {
+      if ($self->can("$msg->{text}")) {
+         my $sub = $msg->{text};
+         $self->$sub();
+      }
    }
 
-   return 1;
+   return;
+}
+
+################################################################################
+#
+# Utility subroutines for interacting with the IRC channel
+#
+################################################################################
+
+#TODO
+sub get_users {
+   my ($self, $channels) = @_;
+
+   my $channel_str = join(q{,}, @{$channels || $self->{channels}});
+
+   print({*STDERR} "getting users from channels $channel_str\n");
+
+   $self->{irc_conn}->send({cmd => 'LIST', msg => "$channel_str"});
+
+   return;
 }
 
 1;
