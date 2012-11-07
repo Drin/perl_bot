@@ -3,6 +3,15 @@ package IRC::ZaszBot;
 use parent 'IRC::BasicBot';
 use Wiki::REST;
 
+use DBI;
+
+use constant DB => 'zasz';
+use constant DB_HOST => 'ssh.eriqaugustine.com';
+use constant DB_PORT => 8906;
+
+use constant DB_USER => 'zasz';
+use constant DB_PASS => 'Z4sZ';
+
 sub new {
    my ($class, $nick, $channels) = @_;
    my $self = $class->SUPER::new($nick, $channels);
@@ -15,24 +24,55 @@ sub new {
    return $self;
 }
 
+sub connect_brain {
+   my ($self) = @_;
+
+   my $db_connect = q{DBI:mysql:zasz};
+   $self->{brain} = DBI->connect($db_connect, 'zasz', 'Z4sZ') or
+   die ("$1\n\n$DBI::errstr\n");
+
+   return;
+}
+
 sub default_handler {
    my ($self, $text) = @_;
 
-   my ($did_something, $parsed_msg) = $self->SUPER::default_handler($text);
+   my $parsed_msg = $self->SUPER::default_handler($text);
 
-   if (!$did_something) {
-      $self->converse_handler($parsed_msg);
-      return 1;
+   if ($parsed_msg->{text}) {
+      print({*STDERR} "parsed message:\n");
+      for my $msg_key (keys %{$parsed_msg}) {
+         print({*STDERR} "\t$msg_key => $parsed_msg->{$msg_key}\n");
+      }
+   }
+   $self->learn($parsed_msg);
+
+   $self->wiki_handler($parsed_msg);
+   $self->converse_handler($parsed_msg);
+
+   return $parsed_msg;
+}
+
+sub wiki_handler {
+   my ($self, $msg) = @_;
+
+   my $msg_type = $self->classify_msg($msg);
+   my $response = $self->$msg_type($msg);
+
+   if ($response && $response->{content}) {
+      print({*STDERR} "response: $response->{content}\n");
    }
 
-   return 0;
+   if ($msg->{directed} && $response && $response->{content}) {
+      return $self->handle_response($response);
+   }
 }
 
 sub converse_handler {
    my ($self, $msg) = @_;
 
    if ($msg->{sender} && $msg->{sender} !~ m/^$self->{nick}$/ &&
-       !$self->is_conversing($msg->{sender})) {
+       $msg->{directed} && !$self->is_conversing($msg->{sender})) {
       $self->handle_response($self->greet_response($msg));
       return;
    }
@@ -44,41 +84,16 @@ sub converse_handler {
          $self->$converse_state($converser);
       }
       elsif ($converse_state =~ m/secondary|give_up/) {
-         if ($msg->{text} && $msg->{text} =~ m/$self->{nick}/) {
+         if ($msg->{text} && $msg->{directed}) {
             $self->{timer} = time;
             $self->$converse_state($converser, $msg);
          }
          elsif ((time - $self->{timer}) > $self->{patience}) {
-            print({*STDERR} "I'm TOO IMPATIENT!\n");
-
             $self->{timer} = time;
             $self->$converse_state($converser);
          }
       }
    }
-}
-
-################################################################################
-#
-# Method for processing input; i.e. controller
-#
-################################################################################
-
-sub process {
-   my ($self, $msg) = @_;
-
-   my $get_msg_type = 'get_'.$self->classify_msg($msg);
-   my $response = $self->$get_msg_type($msg);
-
-   if ($response->{type} =~ m/unknown/i) {
-      return 0;
-   }
-
-   elsif ($msg->{text} =~ m/$self->{nick}/i && $response) {
-      return $self->handle_response($response);
-   }
-
-   return 0;
 }
 
 sub handle_response {
@@ -92,11 +107,36 @@ sub handle_response {
    elsif ($response->{type} =~ m/conversation/) {
       $self->{irc_conn}->send({cmd => 'PRIVMSG',
                                msg => ":$response->{content}",
-                               targets => $self->{channels}});
-      return 1;
+                               targets => [$response->{channel}]});
+   }
+}
+
+################################################################################
+#
+# Knowledge based subroutines for learning events and information
+#
+################################################################################
+
+sub learn {
+   my ($self, $msg) = @_;
+
+   if ($msg->{type} =~ m/JOIN/) {
+      my $sql_statement = $self->{brain}->prepare('CALL add_user(?)');
+      $sql_statement->bind_param(1, $msg->{sender});
+      $sql_statement->execute();
    }
 
-   return 0;
+   if ($msg->{type}) {
+      my $sql_statement = $self->{brain}->prepare('
+      INSERT INTO user_events(user_name, event_type) values (?, ?)
+      ');
+      
+      $sql_statement->bind_param(1, $msg->{sender});
+      $sql_statement->bind_param(2, $msg->{type});
+      $sql_statement->execute();
+   }
+
+   return;
 }
 
 ################################################################################
@@ -111,18 +151,13 @@ sub classify_msg {
    if ($msg->{text} =~ m/birth|born/i) { return 'bday_topic'; }
 
    elsif ($msg->{text} =~ m/what (?:is|are)|tell me about/i) { return 'info_topic'; }
-
-=cut
-   elsif ($msg->{text} =~ m/$self->{nick}/ ||
-          $msg->{channel} =~ m/$self->{nick}/) {
-      return 'conversation';
-   }
-=cut
    
-   return 'unknown';
+   return 'unknown_topic';
 }
 
-sub get_info_topic {
+sub unknown_topic { return {type => 'none', content => q{}}; }
+
+sub info_topic {
    my ($self, $msg) = @_;
    my ($text, $content) = ($msg->{text}, q{});
 
@@ -136,10 +171,13 @@ sub get_info_topic {
       $content = $1 || $2 || $3;
    }
 
-   return {type => 'info_lookup', content => $content};
+   $content =~ s/\W*$//;
+
+   return {type => 'info_lookup', content => $content,
+           channel => $msg->{channel}};
 }
 
-sub get_bday_topic {
+sub bday_topic {
    my ($self, $msg) = @_;
    my ($text, $content) = ($msg->{text}, q{});
 
@@ -151,29 +189,10 @@ sub get_bday_topic {
 
    if ($text && $text =~ m/$what_regex|$when_regex/i) {
       $content = $1 || $2;
-      print({*STDERR} "content:$content\n");
    }
 
-   return {type => 'bday_lookup', content => $content};
-}
-
-=cut
-sub get_conversation {
-   my ($self, $msg) = @_;
-   my $content = q{};
-
-   if ($self->is_conversing($msg->{sender})) {
-      my $converse_state = $self->get_converse_state($msg->{sender});
-      $self->$converse_state($msg);
-   }
-   else { return $self->greet_response($msg); }
-}
-=cut
-
-sub get_unknown {
-   my ($self, $msg) = @_;
-
-   return {type => 'none', content => q{}};
+   return {type => 'bday_lookup', content => $content,
+           channel => $msg->{channel}};
 }
 
 ################################################################################
@@ -195,36 +214,42 @@ sub get_converse_state {
 sub greet_response {
    my ($self, $msg) = @_;
 
-   $self->{conversations}->{$msg->{sender}} = 'inquire';
+   if ($msg->{text} =~ m/h[ea]llo|how.*you|greet|hi|hey/) {
+      $self->{conversations}->{$msg->{sender}} = 'inquire';
 
-   my @text_words = split(qr/ /, $msg->{text});
+      my @text_words = split(qr/ /, $msg->{text});
 
-   if (scalar @text_words > 1) {
-      $content = "$msg->{sender}: Hello to you too!";
+      if (scalar @text_words > 2) {
+         $content = "$msg->{sender}: Hello to you too!";
+      }
+      else { $content = "Hello $msg->{sender}"; }
+
+      return {type => 'conversation', content => $content,
+              channel => $msg->{channel}};
    }
-   else { $content = 'Hello'; }
-
-   return {type => 'conversation', content => $content};
 }
 
 sub inquire_response {
    my ($self, $msg) = @_;
    my $content = "I'm good. It was nice talking to you!";
-   return {type => 'conversation', content => $content};
+   return {type => 'conversation', content => $content,
+           channel => $msg->{channel}};
 }
 
 sub init_greeting {
    my ($self, $converser) = @_;
    $self->{conversations}->{$converser} = 'secondary';
-   $self->handle_response({type => 'conversation',
-                           content => "$converser: Hey!"});
+   $self->handle_response({type    => 'conversation',
+                           content => "$converser: Hey!",
+                           channel => $msg->{channel}});
 }
 
 sub inquire {
    my ($self, $converser) = @_;
    $self->{conversations}->{$converser} = 'give_up';
-   $self->handle_response({type => 'conversation',
-                           content => "$converser: How are you?"});
+   $self->handle_response({type    => 'conversation',
+                           content => "$converser: How are you?",
+                           channel => $msg->{channel}});
 }
 
 sub secondary {
@@ -237,8 +262,9 @@ sub secondary {
    }
    else {
       $self->{conversations}->{$converser} = 'give_up';
-      $self->handle_response({type => 'conversation',
-                              content => "$converser: HEY! LISTEN!"});
+      $self->handle_response({type    => 'conversation',
+                              content => "$converser: HEY! LISTEN!",
+                              channel => $msg->{channel}});
    }
 }
 
@@ -247,11 +273,11 @@ sub give_up {
 
    if ($msg && $msg->{text}) {
       $self->handle_response($self->inquire_response($msg));
-      return;
    }
    else {
-      $self->handle_response({type => 'conversation',
-                              content => "$converser: ...awkward"});
+      $self->handle_response({type    => 'conversation',
+                              content => "$converser: ...awkward",
+                              channel => $msg->{channel}});
    }
 
    delete $self->{conversations}->{$converser};
@@ -270,54 +296,41 @@ sub report_content {
       $wiki_content =~ s/(?:<table.*?>.*?)?<\/table>//sig;
 
       while ($wiki_content =~ m{<p>(.*?)</p>}sig) {
-         if (!$self->report_info($1)) { next; }
+         if (!$self->report_info($1, $topic->{channel})) { next; }
          else { last; }
       }
-
-      return 1;
    }
    elsif($topic->{type} =~ m/bday/) {
       if ($wiki_content =~ m/class="fn">$topic->{content}<.*?class="bday">(.*?)</si) {
-         $self->report_bday($topic->{content}, $1);
+         $self->report_bday($topic->{content}, $topic->{channel}, $1);
       }
       elsif ($wiki_content =~ m/class="bday">(.*?)</si) {
-         $self->report_bday($topic->{content}, $1);
+         $self->report_bday($topic->{content}, $topic->{channel}, $1);
       }
-
-      return 1;
    }
-
-   return 0;
 }
 
 sub report_info {
-   my ($self, $wiki_paragraph) = @_;
+   my ($self, $wiki_paragraph, $channel) = @_;
 
-   if ($wiki_paragraph =~ m/<small>|^\d+/i) { return 0; }
+   if ($wiki_paragraph =~ m/<small>|^\d+/i) { return; }
    elsif ($wiki_paragraph =~ m/(?:may refer to|help:searching)/i) {
-      print({*STDERR} "confusing page: $wiki_paragraph\n");
-
       $self->{irc_conn}->send({cmd => 'PRIVMSG',
                                msg => q{:That information escapes me right now...},
-                               targets => $self->{channels}});
-      return 1;
+                               targets => [$channel]});
    }
 
    $wiki_paragraph =~ s/(?:<.*?>)|(?:\[.*?\])//sg;
 
-   while ($wiki_paragraph =~ m/((?:.*?[.]){2,4})/sg) {
+   if ($wiki_paragraph =~ m/((?:.*?[.]){2,4})/sg) {
       $self->{irc_conn}->send({cmd => 'PRIVMSG',
                                msg => ":$1",
-                               targets => $self->{channels}});
+                               targets => [$channel]});
    }
-
-   return 1;
 }
 
 sub report_bday {
-   my ($self, $subj, $date) = @_;
-
-   print ({*STDERR} "bdate: $date\n");
+   my ($self, $subj, $channel, $date) = @_;
 
    my @months = qw{Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec};
 
@@ -325,7 +338,7 @@ sub report_bday {
       my $month = $months[($2 - 1)];
       $self->{irc_conn}->send({cmd => 'PRIVMSG',
                                msg => ":$subj\'s birthday is $month $3, $1",
-                               targets => $self->{channels}});
+                               targets => [$channel]});
    }
 }
 

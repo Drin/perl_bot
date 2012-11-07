@@ -37,7 +37,6 @@ sub disconnect {
    my ($self) = @_;
 
    $self->send({cmd => 'QUIT', msg => ":I must go now, OH WOE IS ME!"});
-   sleep 2;
    close($self->{conn});
 }
 
@@ -54,10 +53,18 @@ sub send {
    my $target_list = q{};
 
    if ($msg_info->{targets}) {
+
+      print({*STDERR} "constructing target list from $msg_info->{targets}:\n");
+      for my $target (@{$msg_info->{targets}}) {
+         print({*STDERR} "\ttarget: $target\n");
+      }
+
       $target_list = join(q{,}, @{$msg_info->{targets}}).' ';
    }
 
-   print({$self->{conn}} "$msg_info->{cmd} $target_list$msg_info->{msg}\n");
+   if ($self->{conn}) {
+      print({$self->{conn}} "$msg_info->{cmd} $target_list$msg_info->{msg}\n");
+   }
 }
 
 sub is_connected {
