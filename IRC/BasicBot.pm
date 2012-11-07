@@ -81,7 +81,7 @@ sub default_handler {
 
 sub parse_msg {
    my ($self, $msg) = @_;
-   my ($sender, $chan, $text, $directed, $type, $command);
+   my ($sender, $chan, $text, $target, $type, $command, $directed);
 
    if ($ENV{DEBUG}) { print ({*STDERR} $msg); }
 
@@ -90,18 +90,24 @@ sub parse_msg {
    }
 
    if ($text) {
-      $directed = ($text =~ s/^$self->{nick}\b//) || $chan =~ m/$self->{nick}/;
-      $command = $text =~ s/^%//;
+      if ($text =~ s/^(\w+)[:,]//) { $target = $1; }
+      elsif ($chan =~ m/$self->{nick}/) { $target = $self->{nick}; }
+      else { $target = q{}; }
 
+      $command = $text =~ s/^%//;
       $text =~ s/^\W*//;
       $text =~ s/\r//;
    }
 
    if ($chan && $chan =~ m/$self->{nick}/) { $chan = $sender; }
 
+   if ($target) { $directed = $target =~ m/$self->{nick}/; }
+   else { $directed = 0; }
+
    return ({type     => $type,
             command  => $command,
             sender   => $sender,
+            target   => $target,
             directed => $directed,
             channel  => $chan,
             text     => $text});
@@ -137,6 +143,20 @@ sub get_users {
    $self->{irc_conn}->send({cmd => 'LIST', msg => "$channel_str"});
 
    return;
+}
+
+################################################################################
+#
+# Utility subroutines for miscellaneous reasons
+#
+################################################################################
+sub get_current_time {
+   my @time_fields = localtime;
+
+   my $time = sprintf("%02d%02d%02d", @time_fields[2, 1, 0]);
+   my $date = sprintf("%04d%02d%02d", $time_fields[5] + 1900,
+                                      @time_fields[4, 3]);
+   return "$date$time";
 }
 
 1;

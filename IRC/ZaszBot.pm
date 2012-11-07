@@ -27,7 +27,7 @@ sub new {
 sub connect_brain {
    my ($self) = @_;
 
-   my $db_connect = q{DBI:mysql:zasz};
+   my $db_connect = q{DBI:mysql:zasz}.q{;host=}.DB_HOST.q{;port=}.DB_PORT;
    $self->{brain} = DBI->connect($db_connect, 'zasz', 'Z4sZ') or
    die ("$1\n\n$DBI::errstr\n");
 
@@ -120,23 +120,54 @@ sub handle_response {
 sub learn {
    my ($self, $msg) = @_;
 
-   if ($msg->{type} =~ m/JOIN/) {
-      my $sql_statement = $self->{brain}->prepare('CALL add_user(?)');
-      $sql_statement->bind_param(1, $msg->{sender});
-      $sql_statement->execute();
-   }
-
-   if ($msg->{type}) {
-      my $sql_statement = $self->{brain}->prepare('
-      INSERT INTO user_events(user_name, event_type) values (?, ?)
-      ');
-      
-      $sql_statement->bind_param(1, $msg->{sender});
-      $sql_statement->bind_param(2, $msg->{type});
-      $sql_statement->execute();
-   }
+   if ($msg->{type} =~ m/JOIN/) { $self->learn_user($msg->{sender}); }
+   if ($msg->{type} =~ m/PRIVMSG/) { $self->learn_msg($msg); }
+   if ($msg->{type}) { $self->learn_event($msg->{sender}, $msg->{type}); }
 
    return;
+}
+
+sub learn_msg {
+   my ($self, $msg) = @_;
+
+   my $sql_statement = $self->{brain}->prepare('
+   INSERT INTO user_messages(sender_user_name, recipient_user_name,
+                             message_text, message_time)
+               values       (?, ?, ?, ?)
+   ');
+
+   $sql_statement->bind_param(1, $msg->{sender});
+   $sql_statement->bind_param(2, $msg->{target});
+   $sql_statement->bind_param(3, $msg->{text});
+   $sql_statement->bind_param(4, $self->SUPER::get_current_time());
+   $sql_statement->execute();
+
+   return $self->{brain}->{executed};
+}
+
+sub learn_user {
+   my ($self, $user) = @_;
+
+   my $sql_statement = $self->{brain}->prepare('CALL add_user(?)');
+   $sql_statement->bind_param(1, $user);
+   $sql_statement->execute();
+
+   return $self->{brain}->{executed};
+}
+
+sub learn_event {
+   my ($self, $user, $type) = @_;
+
+   my $sql_statement = $self->{brain}->prepare('
+   INSERT INTO user_events(user_name, event_type, event_date) values (?, ?, ?)
+   ');
+   
+   $sql_statement->bind_param(1, $user);
+   $sql_statement->bind_param(2, $type);
+   $sql_statement->bind_param(3, $self->SUPER::get_current_time());
+   $sql_statement->execute();
+
+   return $self->{brain}->{executed};
 }
 
 ################################################################################
