@@ -13,7 +13,9 @@ sub new {
 
    my $self = {nick => $nick,
                channels => $channels,
-               status => 'healthy'};
+               status => 'healthy',
+               expect_handler => q{},
+               user_list => {}};
 
    return bless($self, $class);
 }
@@ -52,10 +54,19 @@ sub default_handler {
 
    my $parsed_msg = $self->parse_msg($text);
 
-   if ($text =~ m/found.*hostname/i) {
-      my $nick = $self->{nick};
-      $self->{irc_conn}->send({cmd => 'USER', msg => "$nick 0 * :aldrin"});
-      $self->{irc_conn}->send({cmd => 'NICK', msg => "$nick"});
+   if ($parsed_msg && $parsed_msg->{text}) {
+      my $text = $parsed_msg->{text};
+      $text =~ s/\r//;
+      print({*STDERR} "msg text: '$text'\n");
+   }
+
+   if (my $handle_method = $self->{expect_handler}) {
+      $self->$handle_method($parsed_msg);
+   }
+   elsif ($text =~ m/look.*hostname/i) {
+      $self->{irc_conn}->send({cmd => 'USER',
+                               msg => "$self->{nick} 0 * :aldrin"});
+      $self->{irc_conn}->send({cmd => 'NICK', msg => "$self->{nick}"});
    }
 
    elsif ($text =~ m/:welcome/i) {
@@ -88,9 +99,10 @@ sub parse_msg {
    if ($msg =~ m/^:(.*?)!.*?([A-Z]+) ([#]?.*?)? ?:(.*)/) {
       ($sender, $type, $chan, $text) = ($1, $2, $3, $4);
    }
+   else { return {text => $msg}; }
 
    if ($text) {
-      if ($text =~ s/^(\w+)[:,]//) { $target = $1; }
+      if ($text =~ s/^((?:\w|\-)+)[:,]//) { $target = $1; }
       elsif ($chan =~ m/$self->{nick}/) { $target = $self->{nick}; }
       else { $target = q{}; }
 
@@ -132,15 +144,31 @@ sub process_command {
 #
 ################################################################################
 
-#TODO
 sub get_users {
    my ($self, $channels) = @_;
 
    my $channel_str = join(q{,}, @{$channels || $self->{channels}});
 
-   print({*STDERR} "getting users from channels $channel_str\n");
+   $self->{irc_conn}->send({cmd => 'WHO', msg => "$channel_str"});
+   $self->{expect_handler} = 'parse_users';
 
-   $self->{irc_conn}->send({cmd => 'LIST', msg => "$channel_str"});
+   return;
+}
+
+sub parse_users {
+   my ($self, $msg) = @_;
+
+   if ($msg && $msg->{text}) {
+      if ($msg->{text} =~ m/End.*who/i) {
+         $self->{expect_handler} = q{};
+
+         print({*STDERR} "current user list:\n");
+         for my $user (keys %{$self->{user_list}}) {
+            print({*STDERR} "\t$user\n");
+         }
+      }
+      if ($msg->{text} =~ m/[*] (.*?) H/) { $self->{user_list}->{$1} = 1; }
+   }
 
    return;
 }

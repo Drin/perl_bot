@@ -44,7 +44,9 @@ sub read {
    my ($self) = @_;
    my $msg = q{};
 
-   for my $fh ($self->{manager}->can_read(1)) { $msg = <$fh>; }
+   if ($self->is_connected()) {
+      for my $fh ($self->{manager}->can_read(1)) { $msg = <$fh>; }
+   }
    return $msg;
 }
 
@@ -52,14 +54,12 @@ sub send {
    my ($self, $msg_info) = @_;
    my $target_list = q{};
 
-   if ($msg_info->{targets}) {
-
-      print({*STDERR} "constructing target list from $msg_info->{targets}:\n");
-      for my $target (@{$msg_info->{targets}}) {
-         print({*STDERR} "\ttarget: $target\n");
-      }
-
+   if ($msg_info && $msg_info->{targets} && (scalar $msg_info->{targets} > 0)) {
       $target_list = join(q{,}, @{$msg_info->{targets}}).' ';
+   }
+
+   if ($msg_info->{cmd} =~ m/who/i) {
+      print({*STDERR} "sending message '$msg_info->{cmd} $msg_info->{msg}'\n");
    }
 
    if ($self->{conn}) {

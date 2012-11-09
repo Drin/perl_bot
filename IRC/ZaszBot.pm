@@ -39,7 +39,7 @@ sub default_handler {
 
    my $parsed_msg = $self->SUPER::default_handler($text);
 
-   if ($parsed_msg->{text}) {
+   if ($ENV{DEBUG} && $parsed_msg->{text}) {
       print({*STDERR} "parsed message:\n");
       for my $msg_key (keys %{$parsed_msg}) {
          print({*STDERR} "\t$msg_key => $parsed_msg->{$msg_key}\n");
@@ -89,11 +89,23 @@ sub converse_handler {
             $self->$converse_state($converser, $msg);
          }
          elsif ((time - $self->{timer}) > $self->{patience}) {
-            $self->{timer} = time;
             $self->$converse_state($converser);
          }
       }
    }
+
+   if (time - $self->{timer} > $self->{patience} % 15) {
+      $self->{timer} = time;
+      $self->get_users();
+
+      if (rand() > 0.8) {
+         $self->handle_response({type => 'conversation',
+                                 cmd => 'PRIVMSG',
+                                 msg => 'derp derp'});
+      }
+   }
+
+   #for my $users (@{$self->get_users()}) { }
 }
 
 sub handle_response {
@@ -179,9 +191,13 @@ sub learn_event {
 sub classify_msg {
    my ($self, $msg) = @_;
 
-   if ($msg->{text} =~ m/birth|born/i) { return 'bday_topic'; }
-
-   elsif ($msg->{text} =~ m/what (?:is|are)|tell me about/i) { return 'info_topic'; }
+   if ($msg->{text} =~ m/wiki/ && $msg->{text} =~ m/birth|born/i) {
+      return 'bday_topic';
+   }
+   elsif ($msg->{text} =~ m/wiki/ &&
+          $msg->{text} =~ m/what (?:is|are)|tell me about/i) {
+      return 'info_topic';
+   }
    
    return 'unknown_topic';
 }
@@ -247,6 +263,7 @@ sub greet_response {
 
    if ($msg->{text} =~ m/h[ea]llo|how.*you|greet|hi|hey/) {
       $self->{conversations}->{$msg->{sender}} = 'inquire';
+      $self->{converse_channels}->{$msg->{sender}} = $msg->{channel};
 
       my @text_words = split(qr/ /, $msg->{text});
 
@@ -269,38 +286,43 @@ sub inquire_response {
 
 sub init_greeting {
    my ($self, $converser) = @_;
+   my $channel = $self->{converse_channels}->{$converser} || $msg->{channel};
    $self->{conversations}->{$converser} = 'secondary';
    $self->handle_response({type    => 'conversation',
                            content => "$converser: Hey!",
-                           channel => $msg->{channel}});
+                           channel => $channel});
 }
 
 sub inquire {
    my ($self, $converser) = @_;
+   my $channel = $self->{converse_channels}->{$converser} || $msg->{channel};
    $self->{conversations}->{$converser} = 'give_up';
    $self->handle_response({type    => 'conversation',
                            content => "$converser: How are you?",
-                           channel => $msg->{channel}});
+                           channel => $channel});
 }
 
 sub secondary {
    my ($self, $converser, $msg) = @_;
+   my $channel = $self->{converse_channels}->{$converser} || $msg->{channel};
 
    if ($msg && $msg->{text}) {
       $self->handle_response($self->inquire_response($msg));
       delete $self->{conversations}->{$converser};
+      delete $self->{converse_channels}->{$converser};
       return;
    }
    else {
       $self->{conversations}->{$converser} = 'give_up';
       $self->handle_response({type    => 'conversation',
                               content => "$converser: HEY! LISTEN!",
-                              channel => $msg->{channel}});
+                              channel => $channel});
    }
 }
 
 sub give_up {
    my ($self, $converser, $msg) = @_;
+   my $channel = $self->{converse_channels}->{$converser} || $msg->{channel};
 
    if ($msg && $msg->{text}) {
       $self->handle_response($self->inquire_response($msg));
@@ -308,10 +330,11 @@ sub give_up {
    else {
       $self->handle_response({type    => 'conversation',
                               content => "$converser: ...awkward",
-                              channel => $msg->{channel}});
+                              channel => $channel});
    }
 
    delete $self->{conversations}->{$converser};
+   delete $self->{converse_channels}->{$converser};
 }
 
 ################################################################################
